@@ -11,7 +11,7 @@ app.use(logger());
 app.use(
   "/api/*",
   cors({
-    origin: "http://localhost:5173",
+    origin: process.env.FRONTEND_URL || "http://localhost:5173",
     credentials: true,
   }),
 );
@@ -24,4 +24,7 @@ app.get("/", (c) => {
   return c.text("Hello Hono!");
 });
 
-export default app;
+export default {
+  port: process.env.PORT || 3000, 
+  fetch: app.fetch,
+};
