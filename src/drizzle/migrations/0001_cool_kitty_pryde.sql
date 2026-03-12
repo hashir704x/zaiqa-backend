@@ -1,0 +1,1 @@
+ALTER TABLE "meal_plan" ADD COLUMN "title" text NOT NULL;
