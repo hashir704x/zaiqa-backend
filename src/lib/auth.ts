@@ -1,17 +1,31 @@
-import { betterAuth } from "better-auth";
-import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { db } from "../drizzle/db";
-import * as schema from "../drizzle/schema";
+import * as bcrypt from "bcryptjs";
 
-export const auth = betterAuth({
-  database: drizzleAdapter(db, {
-    provider: "pg",
-    schema: schema,
-  }),
-  emailAndPassword: {
-    enabled: true,
-  },
-  trustedOrigins: [
-    process.env.FRONTEND_URL || "http://localhost:5173",
-  ]
-});
+const SESSION_COOKIE_NAME =
+  process.env.SESSION_COOKIE_NAME || "session_token";
+
+export function getSessionCookieName(): string {
+  return SESSION_COOKIE_NAME;
+}
+
+export async function hashPassword(password: string): Promise<string> {
+  const saltRounds = 10;
+  return bcrypt.hash(password, saltRounds);
+}
+
+export async function verifyPassword(
+  password: string,
+  hash: string,
+): Promise<boolean> {
+  return bcrypt.compare(password, hash);
+}
+
+export function generateSessionToken(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+
+  return (
+    Date.now().toString(36) +
+    Math.random().toString(36).substring(2, 10)
+  ).toUpperCase();
+}

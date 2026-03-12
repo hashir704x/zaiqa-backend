@@ -15,6 +15,13 @@
       "when": 1773311003537,
       "tag": "0001_cool_kitty_pryde",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1773353317531,
+      "tag": "0002_flowery_mattie_franklin",
+      "breakpoints": true
     }
   ]
 }

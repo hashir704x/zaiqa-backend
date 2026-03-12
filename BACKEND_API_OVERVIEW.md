@@ -10,7 +10,7 @@ This document describes how the backend works so a frontend (or another service)
 - **HTTP framework**: Hono
 - **Database**: Neon PostgreSQL (HTTP driver)
 - **ORM**: Drizzle ORM
-- **Auth**: `better-auth` with Drizzle adapter
+- **Auth**: Custom cookie-based auth (manual sessions in Postgres)
 - **AI**: Google Gemini (`@google/generative-ai`, model `gemini-2.5-flash`)
 
 Environment variables (in `.env`):
@@ -48,17 +48,23 @@ Summary:
 
 ## 3. Authentication Model
 
-Auth is handled by Better Auth (`src/lib/auth.ts`) and the `requireAuth` middleware (`src/lib/auth-middleware.ts`).
+Auth is handled by a custom, cookie-based system using the `user` and `session` tables plus the `requireAuth` middleware (`src/lib/auth-middleware.ts`).
+
+- **Core idea**:
+  - When the user logs in or registers, the backend creates a row in the `session` table and sets an HTTP-only cookie (default name: `session_token`) with the session token.
+  - On each authenticated request, `requireAuth` reads the cookie, looks up the session in the database, and then loads the associated user.
+  - If the session is valid and not expired, the user is attached to the context; otherwise, the request is rejected with `401`.
 
 - The frontend should:
-  - Use Better Auth’s client SDK (or direct HTTP) to sign up/sign in.
-  - Include whatever cookies/headers Better Auth requires on **all** `/api/meal-plans` requests.
-- On each request:
-  - `requireAuth` checks the session.
-  - If no valid session: returns `401 { "error": "Unauthorized" }`.
+  - Call the auth endpoints (`/api/auth/register`, `/api/auth/login`, `/api/auth/logout`) described below.
+  - Always send credentials for API calls, e.g. `fetch(url, { credentials: "include" })`, so cookies are included.
+
+- On each request to `/api/meal-plans/*`:
+  - `requireAuth` checks the `session_token` cookie.
+  - If no valid session is found: returns `401 { "error": "Unauthorized" }`.
   - If valid: attaches `user` and `session` to the Hono context.
 
-For the frontend, the key point: **Treat all `/api/meal-plans/*` routes as “logged-in only” and make sure auth cookies are sent.**
+For the frontend, the key point: **Treat all `/api/meal-plans/*` routes as “logged-in only”, and make sure auth cookies are sent (`credentials: "include"`).**
 
 ---
 
@@ -75,6 +81,28 @@ Tables are defined in `src/drizzle/schema.ts`.
 - `difficultyEnum`: `"easy" | "medium" | "hard"`
 
 ### 4.2 Meal Plan Tables
+
+**`user`**
+
+- `id: string` – primary key.
+- `name: string`.
+- `email: string` – unique.
+- `emailVerified: boolean`.
+- `image: string | null`.
+- `passwordHash: string | null` – hashed password for email/password login.
+- `createdAt: Date`.
+- `updatedAt: Date`.
+
+**`session`**
+
+- `id: string` – primary key.
+- `token: string` – random session token stored in cookies.
+- `userId: string` – FK to `user.id`.
+- `expiresAt: Date` – session expiry.
+- `createdAt: Date`.
+- `updatedAt: Date`.
+- `ipAddress: string | null`.
+- `userAgent: string | null`.
 
 **`meal_plan`**
 
@@ -129,11 +157,103 @@ Frontend mental model:
 ## 5. Public API Endpoints
 
 Base URL (from `src/index.ts`):  
-**`/api/meal-plans`**
+- Auth: **`/api/auth`**  
+- Meal plans: **`/api/meal-plans`**
 
-All endpoints below require a valid session (auth cookies).
+All `/api/meal-plans/*` endpoints require a valid session (auth cookies).
 
-### 5.1 Create a meal plan (AI-generated)
+---
+
+### 5.1 Auth endpoints
+
+#### 5.1.1 Register
+
+- **Method**: `POST`
+- **Path**: `/api/auth/register`
+- **Auth**: not required
+- **Body**:
+
+```json
+{
+  "name": "string",
+  "email": "user@example.com",
+  "password": "secret123"
+}
+```
+
+##### Rules
+
+- `name`: required `string`.
+- `email`: valid email address.
+- `password`: at least 6 characters.
+
+##### Responses
+
+- **201** – user created and logged in, with cookie set:
+
+```json
+{
+  "user": {
+    "id": "string",
+    "name": "string",
+    "email": "user@example.com"
+  }
+}
+```
+
+- **400** – invalid request body.
+- **409** – `{ "error": "EMAIL_TAKEN", "message": "A user with this email already exists." }`
+
+On success, the backend sets an HTTP-only `session_token` cookie (or the name configured via `SESSION_COOKIE_NAME`).
+
+#### 5.1.2 Login
+
+- **Method**: `POST`
+- **Path**: `/api/auth/login`
+- **Auth**: not required
+- **Body**:
+
+```json
+{
+  "email": "user@example.com",
+  "password": "secret123"
+}
+```
+
+##### Responses
+
+- **200** – credentials valid, cookie set:
+
+```json
+{
+  "user": {
+    "id": "string",
+    "name": "string",
+    "email": "user@example.com"
+  }
+}
+```
+
+- **400** – invalid request body.
+- **401** – `{ "error": "INVALID_CREDENTIALS", "message": "Invalid email or password." }`
+
+On success, the backend creates a `session` row and sets the `session_token` HTTP-only cookie.
+
+#### 5.1.3 Logout
+
+- **Method**: `POST`
+- **Path**: `/api/auth/logout`
+- **Auth**: requires a valid session cookie
+
+##### Responses
+
+- **204** – session deleted, cookie cleared.
+
+The frontend should call this and then clear any client-side user state.
+
+---
+
+### 5.2 Create a meal plan (AI-generated)
 
 - **Method**: `POST`
 - **Path**: `/api/meal-plans`
@@ -151,7 +271,7 @@ All endpoints below require a valid session (auth cookies).
 }
 ```
 
-#### 5.1.1 Request rules
+#### 5.2.1 Request rules
 
 - `title`: required `string` – user-entered meal plan title.
 - `cuisine` must be one of: `"desi" | "western" | "arabic" | "pan_asian"`.
@@ -186,7 +306,7 @@ If Gemini or the DB insert fails:
 }
 ```
 
-#### 5.1.2 Success response
+#### 5.2.2 Success response
 
 - Status: `201`
 - Shape:
@@ -252,7 +372,7 @@ This is exactly how the frontend should store and render a plan.
 
 ---
 
-### 5.2 List meal plans (for the logged-in user)
+### 5.3 List meal plans (for the logged-in user)
 
 - **Method**: `GET`
 - **Path**: `/api/meal-plans`
@@ -283,7 +403,7 @@ If unauthenticated: `401 { "error": "Unauthorized" }`.
 
 ---
 
-### 5.3 Get a single meal plan (with all days & entries)
+### 5.4 Get a single meal plan (with all days & entries)
 
 - **Method**: `GET`
 - **Path**: `/api/meal-plans/:id`
@@ -304,7 +424,7 @@ If unauthenticated: `401 { "error": "Unauthorized" }`.
 
 ---
 
-### 5.4 Delete a meal plan
+### 5.5 Delete a meal plan
 
 - **Method**: `DELETE`
 - **Path**: `/api/meal-plans/:id`
@@ -325,7 +445,7 @@ Deletes a single meal plan owned by the current user. Because of foreign key `ON
 
 ---
 
-### 5.4 Replace a single meal entry (AI-generated alternative)
+### 5.6 Replace a single meal entry (AI-generated alternative)
 
 - **Method**: `PATCH`
 - **Path**: `/api/meal-plans/:planId/entries/:entryId`
@@ -396,7 +516,12 @@ The important conclusion:
 
 ## 7. Frontend Integration Checklist
 
-- Always ensure the user is authenticated before calling `/api/meal-plans` (Better Auth session).
+- Use the auth endpoints to manage login state:
+  - `POST /api/auth/register` – create account and receive cookie.
+  - `POST /api/auth/login` – log in existing user and receive cookie.
+  - `POST /api/auth/logout` – clear cookie/session.
+- Always send credentials before calling `/api/meal-plans`:
+  - `fetch(url, { credentials: "include" })` so the `session_token` cookie is included.
 - For **creating** a plan:
   - Use the enums exactly as described (no typos).
   - Handle `201`, `400`, `401`, `500`.
