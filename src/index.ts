@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
+import { auth } from "./lib/auth";
 import mealRoutes from "./routes/meal.routes";
-import authRoutes from "./routes/auth.routes";
 
 const app = new Hono();
 
@@ -16,7 +16,7 @@ app.use(
   }),
 );
 
-app.route("/api/auth", authRoutes);
+app.on(["POST", "GET"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 app.route("/api/meal-plans", mealRoutes);
 
 app.get("/", (c) => {
