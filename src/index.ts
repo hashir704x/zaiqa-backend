@@ -8,10 +8,14 @@ const app = new Hono();
 
 app.use(logger());
 
+if (!process.env.FRONTEND_URL) {
+  throw new Error("Failed to load frontend url");
+}
+
 app.use(
   "/api/*",
   cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:5173",
+    origin: process.env.FRONTEND_URL,
     credentials: true,
   }),
 );
