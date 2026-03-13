@@ -24,7 +24,7 @@ app.on(["POST", "GET"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 app.route("/api/meal-plans", mealRoutes);
 
 app.get("/", (c) => {
-  return c.text("Hello Hono!");
+  return c.text("Hello Hono!!");
 });
 
 export default {
